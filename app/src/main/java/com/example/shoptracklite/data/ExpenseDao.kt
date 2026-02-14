@@ -15,6 +15,10 @@ interface ExpenseDao {
     @Query("SELECT * FROM expenses WHERE strftime('%Y-%m', date/1000, 'unixepoch') = strftime('%Y-%m', 'now') ORDER BY date DESC")
     fun getCurrentMonthExpenses(): Flow<List<Expense>>
 
+    // Expenses for a specific year-month (format: "YYYY-MM")
+    @Query("SELECT * FROM expenses WHERE strftime('%Y-%m', date/1000, 'unixepoch', 'localtime') = :yearMonth ORDER BY date DESC")
+    fun getExpensesByYearMonth(yearMonth: String): Flow<List<Expense>>
+
     @Query("SELECT * FROM expenses WHERE DATE(date/1000, 'unixepoch', 'localtime') = :date")
     fun getExpensesByDateString(date: String): Flow<List<Expense>>
 

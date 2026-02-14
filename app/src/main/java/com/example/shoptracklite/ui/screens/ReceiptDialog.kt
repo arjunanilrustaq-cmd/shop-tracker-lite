@@ -125,12 +125,22 @@ fun ReceiptDialog(
                             ) {
                         item {
                             // Header
+                            val displayShopName = receiptData.shopName.ifBlank { "ShopTrack Lite" }
                             Text(
-                                text = "ShopTrack Lite",
+                                text = displayShopName,
                                 style = MaterialTheme.typography.headlineMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = Color.Black
                             )
+                            if (receiptData.crNumber.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "CR No: ${receiptData.crNumber}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color.DarkGray
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
                             Text(
                                 text = if (receiptData.isWholesale) "WHOLESALE RECEIPT" else "RECEIPT",
                                 style = MaterialTheme.typography.titleLarge,
@@ -323,6 +333,19 @@ fun ReceiptDialog(
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = Color.Black
                             )
+                            if (receiptData.paymentMethod == com.example.shoptracklite.data.PaymentMethod.CASH && receiptData.amountPaid != null && receiptData.change != null) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "Amount Paid: ${CurrencyUtils.formatCurrency(receiptData.amountPaid, currencyCode)}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color.Black
+                                )
+                                Text(
+                                    text = "Change: ${CurrencyUtils.formatCurrency(receiptData.change, currencyCode)}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color.Black
+                                )
+                            }
                             
                             Spacer(modifier = Modifier.height(24.dp))
                             

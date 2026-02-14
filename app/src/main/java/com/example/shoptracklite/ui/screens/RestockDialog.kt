@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.shoptracklite.data.Product
+import com.example.shoptracklite.ui.components.BluetoothBarcodeDetector
 import java.text.NumberFormat
 import java.util.*
 
@@ -35,12 +36,13 @@ fun RestockDialog(
     var restockQuantity by remember { mutableStateOf("") }
     val context = LocalContext.current
 
-    // Filter products based on search
+    // Filter products based on search - only show products that track inventory
     val filteredProducts = remember(products, searchQuery) {
+        val trackableProducts = products.filter { it.trackInventory }
         if (searchQuery.isBlank()) {
-            products
+            trackableProducts
         } else {
-            products.filter { product ->
+            trackableProducts.filter { product ->
                 product.name.contains(searchQuery, ignoreCase = true) ||
                 product.barcode?.contains(searchQuery, ignoreCase = true) == true
             }
@@ -51,6 +53,24 @@ fun RestockDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
+        // Bluetooth barcode reader support
+        BluetoothBarcodeDetector(
+            enabled = !showBarcodeScanner && selectedProduct == null,
+            onBarcodeScanned = { barcode ->
+                // Search for product with this barcode
+                val product = products.find { it.barcode == barcode && it.trackInventory }
+                if (product != null) {
+                    selectedProduct = product
+                    restockQuantity = ""
+                } else {
+                    Toast.makeText(
+                        context,
+                        "No product found with barcode: $barcode",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        ) {
         Card(
             modifier = Modifier
                 .fillMaxWidth(0.95f)
@@ -172,6 +192,7 @@ fun RestockDialog(
                 }
             }
         }
+        } // End BluetoothBarcodeDetector
     }
 
     // Barcode scanner dialog
@@ -179,7 +200,7 @@ fun RestockDialog(
         com.example.shoptracklite.ui.components.BarcodeScannerDialog(
             onBarcodeScanned = { barcode ->
                 // Search for product with this barcode
-                val product = products.find { it.barcode == barcode }
+                val product = products.find { it.barcode == barcode && it.trackInventory }
                 if (product != null) {
                     selectedProduct = product
                     restockQuantity = ""

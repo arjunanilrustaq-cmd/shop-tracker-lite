@@ -22,5 +22,6 @@ data class Sale(
     val paymentMethod: PaymentMethod,
     val saleDate: Date = Date(),
     val isWholesale: Boolean = false,
-    val isCancelled: Boolean = false
+    val isCancelled: Boolean = false,
+    val transactionId: Long? = null
 )

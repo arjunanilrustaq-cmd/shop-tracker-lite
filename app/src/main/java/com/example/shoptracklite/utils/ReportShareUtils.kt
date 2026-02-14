@@ -94,9 +94,10 @@ object ReportShareUtils {
         canvas.drawText("Selected Date: $displayDate", 50 * density, y, headerPaint)
         y += 30 * density
         
-        // Summary for selected date
+        // Summary for selected date (bill-wise)
         if (selectedDateSales.isNotEmpty()) {
-            val totalSales = selectedDateSales.size
+            val groupedBills = selectedDateSales.groupBy { it.transactionId ?: it.id.toLong() }.values
+            val totalSales = groupedBills.size
             val totalRevenue = selectedDateSales.sumOf { it.totalAmount }
             val totalProfit = selectedDateSales.sumOf { it.profit }
             val totalItems = selectedDateSales.sumOf { it.quantitySold }
@@ -106,7 +107,7 @@ object ReportShareUtils {
             canvas.drawText("Daily Summary:", 50 * density, y, headerPaint)
             y += 25 * density
             
-            canvas.drawText("Sales: $totalSales", 50 * density, y, textPaint)
+            canvas.drawText("Bills: $totalSales", 50 * density, y, textPaint)
             y += 20 * density
             canvas.drawText("Items Sold: $totalItems", 50 * density, y, textPaint)
             y += 20 * density
@@ -119,14 +120,22 @@ object ReportShareUtils {
             canvas.drawText("Visa: ${NumberFormat.getCurrencyInstance(Locale.getDefault()).format(visaRevenue)}", 50 * density, y, textPaint)
             y += 30 * density
             
-            // Sales details
-            canvas.drawText("Sales Details:", 50 * density, y, headerPaint)
+            // Sales details (bill-wise)
+            canvas.drawText("Sales Details (by Bill):", 50 * density, y, headerPaint)
             y += 25 * density
             
-            selectedDateSales.forEach { sale ->
-                canvas.drawText("${sale.productName} - Qty: ${sale.quantitySold} - ${NumberFormat.getCurrencyInstance(Locale.getDefault()).format(sale.totalAmount)}", 
+            groupedBills.forEach { billSales ->
+                val billTotal = billSales.sumOf { it.totalAmount }
+                val timeStr = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(billSales.first().saleDate)
+                canvas.drawText("Bill $timeStr - ${billSales.size} item(s) - ${NumberFormat.getCurrencyInstance(Locale.getDefault()).format(billTotal)}", 
                     50 * density, y, textPaint)
                 y += 18 * density
+                billSales.forEach { sale ->
+                    canvas.drawText("  ${sale.productName} x${sale.quantitySold} - ${NumberFormat.getCurrencyInstance(Locale.getDefault()).format(sale.totalAmount)}", 
+                        50 * density, y, textPaint)
+                    y += 16 * density
+                }
+                y += 4 * density
             }
             y += 20 * density
         }

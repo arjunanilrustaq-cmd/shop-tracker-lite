@@ -12,6 +12,8 @@ import kotlinx.coroutines.launch
 data class SettingsUiState(
     val wholesaleModeEnabled: Boolean = false,
     val currencyCode: String = "USD",
+    val shopName: String = "",
+    val crNumber: String = "",
     val isLoading: Boolean = true
 )
 
@@ -33,6 +35,8 @@ class SettingsViewModel(
                     _uiState.value = _uiState.value.copy(
                         wholesaleModeEnabled = settings?.wholesaleModeEnabled ?: false,
                         currencyCode = settings?.currencyCode ?: "USD",
+                        shopName = settings?.shopName ?: "",
+                        crNumber = settings?.crNumber ?: "",
                         isLoading = false
                     )
                 }
@@ -59,6 +63,30 @@ class SettingsViewModel(
             try {
                 val currentSettings = repository.getSettingsSync()
                 val settings = currentSettings.copy(currencyCode = currencyCode)
+                repository.updateSettings(settings)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+    
+    fun updateShopName(shopName: String) {
+        viewModelScope.launch {
+            try {
+                val currentSettings = repository.getSettingsSync()
+                val settings = currentSettings.copy(shopName = shopName)
+                repository.updateSettings(settings)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+    
+    fun updateCrNumber(crNumber: String) {
+        viewModelScope.launch {
+            try {
+                val currentSettings = repository.getSettingsSync()
+                val settings = currentSettings.copy(crNumber = crNumber)
                 repository.updateSettings(settings)
             } catch (e: Exception) {
                 e.printStackTrace()

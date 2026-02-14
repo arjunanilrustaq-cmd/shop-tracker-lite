@@ -2,6 +2,7 @@ package com.example.shoptracklite.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.shoptracklite.data.Category
 import com.example.shoptracklite.data.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -16,19 +17,32 @@ data class ReceiptData(
     val paymentMethod: PaymentMethod,
     val isWholesale: Boolean = false,
     val customerName: String? = null,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val shopName: String = "",
+    val crNumber: String = "",
+    val amountPaid: Double? = null,
+    val change: Double? = null
 )
+
+/** Represents the selected filter: FAVORITES or a category ID */
+data class CategoryFilter(val isFavorites: Boolean, val categoryId: Long? = null)
 
 data class HomeUiState(
     val favoriteProducts: List<Product> = emptyList(),
+    val allProducts: List<Product> = emptyList(),
+    val categories: List<com.example.shoptracklite.data.Category> = emptyList(),
+    val categoryProducts: List<Product> = emptyList(),
+    val selectedFilter: CategoryFilter = CategoryFilter(isFavorites = true),
     val searchQuery: String = "",
-    val searchResults: List<Product> = emptyList(),
+    val showSearchBar: Boolean = false,
     val cartItems: List<CartItem> = emptyList(),
     val cartTotal: Double = 0.0,
     val cartWholesaleTotal: Double = 0.0,
     val discount: Double = 0.0,
     val showCart: Boolean = false,
+    val showFavoritesSheet: Boolean = false,
     val paymentMethod: PaymentMethod = PaymentMethod.CASH,
+    val amountPaid: Double = 0.0,
     val isLoading: Boolean = true,
     val errorMessage: String? = null,
     val successMessage: String? = null,
@@ -49,7 +63,33 @@ class HomeViewModel(
 
     init {
         loadFavoriteProducts()
+        loadAllProducts()
+        loadCategories()
         loadSettings()
+    }
+    
+    private fun loadCategories() {
+        viewModelScope.launch {
+            try {
+                repository.getAllCategories().collect { categories ->
+                    _uiState.value = _uiState.value.copy(categories = categories)
+                }
+            } catch (e: Exception) {
+                // Ignore
+            }
+        }
+    }
+    
+    private fun loadAllProducts() {
+        viewModelScope.launch {
+            try {
+                repository.getAllProducts().collect { products ->
+                    _uiState.value = _uiState.value.copy(allProducts = products)
+                }
+            } catch (e: Exception) {
+                // Ignore
+            }
+        }
     }
 
     private fun loadSettings() {
@@ -88,18 +128,29 @@ class HomeViewModel(
 
     fun updateSearchQuery(query: String) {
         _uiState.value = _uiState.value.copy(searchQuery = query)
-        if (query.isBlank()) {
-            _uiState.value = _uiState.value.copy(searchResults = emptyList())
-        } else {
+    }
+    
+    fun toggleSearchBar() {
+        _uiState.value = _uiState.value.copy(
+            showSearchBar = !_uiState.value.showSearchBar,
+            searchQuery = if (_uiState.value.showSearchBar) "" else _uiState.value.searchQuery
+        )
+    }
+    
+    fun selectFilter(filter: CategoryFilter) {
+        _uiState.value = _uiState.value.copy(selectedFilter = filter)
+        if (!filter.isFavorites && filter.categoryId != null) {
             viewModelScope.launch {
                 try {
-                    repository.searchProducts(query).collect { results ->
-                        _uiState.value = _uiState.value.copy(searchResults = results)
+                    repository.getProductsByCategory(filter.categoryId).collect { products ->
+                        _uiState.value = _uiState.value.copy(categoryProducts = products)
                     }
                 } catch (e: Exception) {
-                    _uiState.value = _uiState.value.copy(errorMessage = e.message)
+                    _uiState.value = _uiState.value.copy(categoryProducts = emptyList())
                 }
             }
+        } else {
+            _uiState.value = _uiState.value.copy(categoryProducts = emptyList())
         }
     }
 
@@ -148,14 +199,14 @@ class HomeViewModel(
             try {
                 val product = repository.getProductByBarcode(barcode)
                 if (product != null) {
-                    if (product.quantityInStock > 0) {
+                    if (product.trackInventory && product.quantityInStock <= 0) {
+                        _uiState.value = _uiState.value.copy(
+                            errorMessage = "${product.name} is out of stock"
+                        )
+                    } else {
                         addToCart(product, 1)
                         _uiState.value = _uiState.value.copy(
                             successMessage = "${product.name} added to cart"
-                        )
-                    } else {
-                        _uiState.value = _uiState.value.copy(
-                            errorMessage = "${product.name} is out of stock"
                         )
                     }
                 } else {
@@ -203,7 +254,9 @@ class HomeViewModel(
                     wholesalePrice = product.wholesalePrice,
                     quantity = quantity,
                     totalAmount = retailTotal,
-                    wholesaleTotalAmount = wholesaleTotal
+                    wholesaleTotalAmount = wholesaleTotal,
+                    imagePath = product.imagePath,
+                    colorHex = product.colorHex
                 )
                 currentCart.add(newItem)
             }
@@ -271,9 +324,20 @@ class HomeViewModel(
     fun toggleCart() {
         _uiState.value = _uiState.value.copy(showCart = !_uiState.value.showCart)
     }
+    
+    fun toggleFavoritesSheet() {
+        _uiState.value = _uiState.value.copy(showFavoritesSheet = !_uiState.value.showFavoritesSheet)
+    }
 
     fun updatePaymentMethod(paymentMethod: PaymentMethod) {
-        _uiState.value = _uiState.value.copy(paymentMethod = paymentMethod)
+        _uiState.value = _uiState.value.copy(
+            paymentMethod = paymentMethod,
+            amountPaid = if (paymentMethod != PaymentMethod.CASH) 0.0 else _uiState.value.amountPaid
+        )
+    }
+
+    fun updateAmountPaid(amount: Double) {
+        _uiState.value = _uiState.value.copy(amountPaid = maxOf(0.0, amount))
     }
     
     fun updateCustomerName(name: String) {
@@ -294,6 +358,8 @@ class HomeViewModel(
                 val finalTotal = maxOf(0.0, subtotal - discount)
                 val paymentMethod = _uiState.value.paymentMethod
                 val customerName = _uiState.value.customerName
+                val amountPaid = _uiState.value.amountPaid
+                val transactionId = System.currentTimeMillis()
                 
                 // Distribute discount proportionally across items
                 for (item in cartItems) {
@@ -315,7 +381,8 @@ class HomeViewModel(
                         item.quantity,
                         paymentMethod,
                         isWholesale,
-                        itemDiscountShare
+                        itemDiscountShare,
+                        transactionId
                     )
                     if (!success) {
                         allSuccessful = false
@@ -324,7 +391,9 @@ class HomeViewModel(
                 }
                 
                 if (allSuccessful) {
-                    // Create receipt data
+                    val settings = repository.getSettingsSync()
+                    val cashAmountPaid = if (paymentMethod == PaymentMethod.CASH && amountPaid > 0) amountPaid else null
+                    val cashChange = if (cashAmountPaid != null) maxOf(0.0, cashAmountPaid - finalTotal) else null
                     val receipt = ReceiptData(
                         items = cartItems,
                         subtotal = subtotal,
@@ -332,7 +401,11 @@ class HomeViewModel(
                         total = finalTotal,
                         paymentMethod = paymentMethod,
                         isWholesale = isWholesale,
-                        customerName = if (customerName.isNotBlank()) customerName else null
+                        customerName = if (customerName.isNotBlank()) customerName else null,
+                        shopName = settings.shopName,
+                        crNumber = settings.crNumber,
+                        amountPaid = cashAmountPaid,
+                        change = cashChange
                     )
                     
                     _uiState.value = _uiState.value.copy(
@@ -340,6 +413,7 @@ class HomeViewModel(
                         cartTotal = 0.0,
                         cartWholesaleTotal = 0.0,
                         discount = 0.0,
+                        amountPaid = 0.0,
                         showCart = false,
                         showReceipt = true,
                         receiptData = receipt,
@@ -415,7 +489,9 @@ class HomeViewModel(
                                 wholesalePrice = product.wholesalePrice,
                                 quantity = quantity,
                                 totalAmount = retailTotal,
-                                wholesaleTotalAmount = wholesaleTotal
+                                wholesaleTotalAmount = wholesaleTotal,
+                                imagePath = product.imagePath,
+                                colorHex = product.colorHex
                             )
                             currentCart.add(newItem)
                         }

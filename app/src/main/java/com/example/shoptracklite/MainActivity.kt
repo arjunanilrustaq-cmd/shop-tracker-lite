@@ -35,11 +35,16 @@ class MainActivity : ComponentActivity() {
     private val repository by lazy { 
         ShopTrackRepository(
             productDao = database.productDao(),
+            categoryDao = database.categoryDao(),
             saleDao = database.saleDao(),
             favoriteDao = database.favoriteDao(),
             priceRangeDao = database.priceRangeDao(),
             settingsDao = database.settingsDao(),
-            expenseDao = database.expenseDao()
+            expenseDao = database.expenseDao(),
+            cashReconciliationDao = database.cashReconciliationDao(),
+            supplyDao = database.supplyDao(),
+            productSupplyLinkDao = database.productSupplyLinkDao(),
+            purchaseBillDao = database.purchaseBillDao()
         )
     }
 

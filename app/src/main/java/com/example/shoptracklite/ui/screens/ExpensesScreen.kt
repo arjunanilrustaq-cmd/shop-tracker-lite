@@ -556,7 +556,7 @@ fun AddExpenseDialog(
     onDismiss: () -> Unit
 ) {
     var expandedCategory by remember { mutableStateOf(false) }
-    val categories = listOf("General", "Rent", "Utilities", "Supplies", "Salary", "Marketing", "Transportation", "Other")
+    val categories = listOf("General", "Rent", "Utilities", "Supplies", "Inventory Purchase", "Salary", "Marketing", "Transportation", "Other")
     
     AlertDialog(
         onDismissRequest = onDismiss,

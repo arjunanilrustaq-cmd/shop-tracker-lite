@@ -17,6 +17,9 @@ interface ProductDao {
     @Query("SELECT * FROM products WHERE barcode = :barcode LIMIT 1")
     suspend fun getProductByBarcode(barcode: String): Product?
 
+    @Query("SELECT * FROM products WHERE (:categoryId IS NULL AND categoryId IS NULL) OR categoryId = :categoryId ORDER BY name ASC")
+    fun getProductsByCategory(categoryId: Long?): Flow<List<Product>>
+
     @Insert
     suspend fun insertProduct(product: Product): Long
 

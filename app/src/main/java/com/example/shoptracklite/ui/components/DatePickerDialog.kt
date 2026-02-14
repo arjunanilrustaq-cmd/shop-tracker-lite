@@ -1,12 +1,7 @@
 package com.example.shoptracklite.ui.components
 
-import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -20,56 +15,33 @@ fun DatePickerDialog(
     val datePickerState = rememberDatePickerState(
         initialSelectedDateMillis = initialDate
     )
-    val dateFormatter = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+    // Use UTC timezone for the formatter to match the DatePicker's UTC-based selection
+    val dateFormatter = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).apply {
+        timeZone = TimeZone.getTimeZone("UTC")
+    }
 
-    Dialog(onDismissRequest = onDismiss) {
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = "Select Date",
-                    style = MaterialTheme.typography.headlineSmall
-                )
-                
-                Spacer(modifier = Modifier.height(16.dp))
-                
-                DatePicker(
-                    state = datePickerState
-                )
-                
-                Spacer(modifier = Modifier.height(16.dp))
-                
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = onDismiss,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("Cancel")
+    // Use the official Material3 DatePickerDialog for proper calendar rendering
+    androidx.compose.material3.DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    datePickerState.selectedDateMillis?.let { selectedDateMillis ->
+                        // Material3 DatePicker returns UTC midnight, so use UTC formatter
+                        onDateSelected(dateFormatter.format(Date(selectedDateMillis)))
                     }
-                    
-                    Button(
-                        onClick = {
-                            datePickerState.selectedDateMillis?.let { selectedDateMillis ->
-                                onDateSelected(dateFormatter.format(Date(selectedDateMillis)))
-                            }
-                            onDismiss()
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("Select")
-                    }
+                    onDismiss()
                 }
+            ) {
+                Text("Select")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
             }
         }
+    ) {
+        DatePicker(state = datePickerState)
     }
 }

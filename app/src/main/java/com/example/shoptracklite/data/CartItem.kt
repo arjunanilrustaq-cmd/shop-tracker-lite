@@ -7,5 +7,7 @@ data class CartItem(
     val wholesalePrice: Double?,
     val quantity: Int,
     val totalAmount: Double,
-    val wholesaleTotalAmount: Double?
+    val wholesaleTotalAmount: Double?,
+    val imagePath: String? = null,
+    val colorHex: String? = null
 )

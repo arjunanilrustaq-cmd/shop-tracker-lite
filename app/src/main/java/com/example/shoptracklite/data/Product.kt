@@ -15,5 +15,9 @@ data class Product(
     val quantityInStock: Int,
     val hasQuantityBasedPricing: Boolean = false,
     val barcode: String? = null,
+    val imagePath: String? = null,
+    val colorHex: String? = null,
+    val trackInventory: Boolean = true,
+    val categoryId: Long? = null,
     val createdAt: Date = Date()
 )

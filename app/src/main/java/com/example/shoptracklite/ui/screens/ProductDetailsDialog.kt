@@ -75,54 +75,82 @@ fun ProductDetailsDialog(
                         .padding(24.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    // Stock status
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(
-                            containerColor = when {
-                                product.quantityInStock == 0 -> MaterialTheme.colorScheme.errorContainer
-                                product.quantityInStock < 10 -> Color(0xFFFFF3E0)
-                                else -> Color(0xFFE8F5E9)
-                            }
-                        )
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                when {
-                                    product.quantityInStock == 0 -> Icons.Default.Warning
-                                    product.quantityInStock < 10 -> Icons.Default.Info
-                                    else -> Icons.Default.CheckCircle
-                                },
-                                contentDescription = null,
-                                tint = when {
-                                    product.quantityInStock == 0 -> MaterialTheme.colorScheme.error
-                                    product.quantityInStock < 10 -> Color(0xFFFF6F00)
-                                    else -> Color(0xFF2E7D32)
-                                },
-                                modifier = Modifier.size(32.dp)
+                    // Stock status (only for products that track inventory)
+                    if (product.trackInventory) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = when {
+                                    product.quantityInStock == 0 -> MaterialTheme.colorScheme.errorContainer
+                                    product.quantityInStock < 10 -> Color(0xFFFFF3E0)
+                                    else -> Color(0xFFE8F5E9)
+                                }
                             )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column {
-                                Text(
-                                    text = "Current Stock",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = "${product.quantityInStock} units",
-                                    style = MaterialTheme.typography.headlineMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = when {
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    when {
+                                        product.quantityInStock == 0 -> Icons.Default.Warning
+                                        product.quantityInStock < 10 -> Icons.Default.Info
+                                        else -> Icons.Default.CheckCircle
+                                    },
+                                    contentDescription = null,
+                                    tint = when {
                                         product.quantityInStock == 0 -> MaterialTheme.colorScheme.error
                                         product.quantityInStock < 10 -> Color(0xFFFF6F00)
                                         else -> Color(0xFF2E7D32)
-                                    }
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                    Text(
+                                        text = "Current Stock",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = "${product.quantityInStock} units",
+                                        style = MaterialTheme.typography.headlineMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = when {
+                                            product.quantityInStock == 0 -> MaterialTheme.colorScheme.error
+                                            product.quantityInStock < 10 -> Color(0xFFFF6F00)
+                                            else -> Color(0xFF2E7D32)
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Default.Info,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(32.dp)
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text(
+                                    text = "Inventory tracking disabled (e.g. services)",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
@@ -160,14 +188,16 @@ fun ProductDetailsDialog(
                         iconTint = if (profit > 0) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error
                     )
 
-                    // Total value
-                    val totalValue = product.quantityInStock * product.sellingPrice
-                    DetailRow(
-                        icon = Icons.Default.Inventory,
-                        label = "Total Inventory Value",
-                        value = currencyFormat.format(totalValue),
-                        iconTint = MaterialTheme.colorScheme.secondary
-                    )
+                    // Total value (only for products that track inventory)
+                    if (product.trackInventory) {
+                        val totalValue = product.quantityInStock * product.sellingPrice
+                        DetailRow(
+                            icon = Icons.Default.Inventory,
+                            label = "Total Inventory Value",
+                            value = currencyFormat.format(totalValue),
+                            iconTint = MaterialTheme.colorScheme.secondary
+                        )
+                    }
 
                     // Barcode if available
                     if (product.barcode != null) {
@@ -180,35 +210,6 @@ fun ProductDetailsDialog(
                         )
                     }
 
-                    // Quantity-based pricing indicator
-                    if (product.hasQuantityBasedPricing) {
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.tertiaryContainer
-                            )
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    Icons.Default.Settings,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onTertiaryContainer,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = "Quantity-based pricing enabled",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onTertiaryContainer
-                                )
-                            }
-                        }
-                    }
                 }
 
                 // Action buttons

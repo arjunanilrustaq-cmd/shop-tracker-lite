@@ -10,6 +10,7 @@ import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -17,6 +18,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
@@ -28,6 +32,9 @@ import com.google.accompanist.permissions.rememberPermissionState
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import java.util.concurrent.Executors
 
 @OptIn(ExperimentalPermissionsApi::class, ExperimentalMaterial3Api::class)
@@ -215,5 +222,127 @@ private fun processImageProxy(
                 imageProxy.close()
             }
     } ?: imageProxy.close()
+}
+
+/**
+ * Bluetooth Barcode Detector
+ * 
+ * A composable that wraps content and captures keyboard input from Bluetooth barcode readers.
+ * Bluetooth scanners send barcodes as rapid HID keyboard input, typically ending with Enter.
+ * 
+ * @param enabled Whether the detector is active
+ * @param onBarcodeScanned Callback when a barcode is detected
+ * @param content The content to wrap
+ */
+@Composable
+fun BluetoothBarcodeDetector(
+    enabled: Boolean = true,
+    onBarcodeScanned: (String) -> Unit,
+    content: @Composable () -> Unit
+) {
+    // Buffer to accumulate barcode characters
+    var barcodeBuffer by remember { mutableStateOf("") }
+    var lastInputTime by remember { mutableStateOf(0L) }
+    val scope = rememberCoroutineScope()
+    var timeoutJob by remember { mutableStateOf<Job?>(null) }
+    
+    // Tone generator for beep feedback
+    val toneGenerator = remember { ToneGenerator(AudioManager.STREAM_NOTIFICATION, 100) }
+    
+    DisposableEffect(Unit) {
+        onDispose {
+            toneGenerator.release()
+        }
+    }
+    
+    // Focus requester to capture keyboard events
+    val focusRequester = remember { FocusRequester() }
+    
+    // Request focus when enabled
+    LaunchedEffect(enabled) {
+        if (enabled) {
+            try {
+                focusRequester.requestFocus()
+            } catch (e: Exception) {
+                // Focus request may fail if not yet attached
+            }
+        }
+    }
+    
+    // Constants for detection
+    val bufferTimeoutMs = 500L  // Clear buffer if no Enter received
+    val minBarcodeLength = 3   // Minimum valid barcode length
+    
+    Box(
+        modifier = Modifier
+            .focusRequester(focusRequester)
+            .focusable(enabled)
+            .onKeyEvent { event ->
+                if (!enabled) return@onKeyEvent false
+                
+                // Only handle key down events
+                if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                
+                val currentTime = System.currentTimeMillis()
+                
+                when (event.key) {
+                    Key.Enter, Key.NumPadEnter -> {
+                        // Enter key - process the barcode
+                        if (barcodeBuffer.length >= minBarcodeLength) {
+                            val barcode = barcodeBuffer.trim()
+                            barcodeBuffer = ""
+                            timeoutJob?.cancel()
+                            
+                            // Play beep sound
+                            toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 200)
+                            
+                            // Trigger callback
+                            onBarcodeScanned(barcode)
+                            return@onKeyEvent true
+                        } else {
+                            // Too short, clear buffer
+                            barcodeBuffer = ""
+                            timeoutJob?.cancel()
+                        }
+                        false
+                    }
+                    Key.Backspace -> {
+                        // Allow backspace to correct mistakes
+                        if (barcodeBuffer.isNotEmpty()) {
+                            barcodeBuffer = barcodeBuffer.dropLast(1)
+                        }
+                        false
+                    }
+                    Key.Escape -> {
+                        // Clear buffer on escape
+                        barcodeBuffer = ""
+                        timeoutJob?.cancel()
+                        false
+                    }
+                    else -> {
+                        // Get the character from the key event
+                        val char = event.utf16CodePoint.toChar()
+                        
+                        // Only accept printable characters (letters, digits, common barcode chars)
+                        if (char.isLetterOrDigit() || char in "-_.") {
+                            barcodeBuffer += char
+                            lastInputTime = currentTime
+                            
+                            // Cancel previous timeout and start new one
+                            timeoutJob?.cancel()
+                            timeoutJob = scope.launch {
+                                delay(bufferTimeoutMs)
+                                // Timeout - clear buffer if Enter wasn't pressed
+                                barcodeBuffer = ""
+                            }
+                            return@onKeyEvent true
+                        }
+                        false
+                    }
+                }
+            }
+    ) {
+        content()
+    }
 }
 

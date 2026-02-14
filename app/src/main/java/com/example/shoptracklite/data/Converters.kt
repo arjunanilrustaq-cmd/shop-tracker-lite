@@ -23,4 +23,14 @@ class Converters {
     fun toPaymentMethod(paymentMethod: String?): PaymentMethod? {
         return paymentMethod?.let { PaymentMethod.valueOf(it) }
     }
+
+    @TypeConverter
+    fun fromPurchaseItemType(itemType: PurchaseItemType?): String? {
+        return itemType?.name
+    }
+
+    @TypeConverter
+    fun toPurchaseItemType(itemType: String?): PurchaseItemType? {
+        return itemType?.let { PurchaseItemType.valueOf(it) }
+    }
 }

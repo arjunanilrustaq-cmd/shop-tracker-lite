@@ -2,6 +2,8 @@ package com.example.shoptracklite.ui.screens
 
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -30,6 +32,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.platform.LocalContext
 import android.widget.Toast
 import com.example.shoptracklite.data.*
+import com.example.shoptracklite.ui.components.BluetoothBarcodeDetector
+import com.example.shoptracklite.viewmodel.CategoryFilter
 import com.example.shoptracklite.viewmodel.HomeViewModel
 import com.example.shoptracklite.utils.CurrencyUtils
 
@@ -42,10 +46,27 @@ fun HomeScreen(
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     var showBarcodeScanner by remember { mutableStateOf(false) }
-    
-    // Drag and drop state for favorites reordering
-    var draggedItemIndex by remember { mutableStateOf<Int?>(null) }
-    var dragOffset by remember { mutableStateOf(0f) }
+
+    // Bluetooth barcode reader support - wraps content to capture keyboard input
+    BluetoothBarcodeDetector(
+        enabled = !showBarcodeScanner && !uiState.showCart && !uiState.showFavoritesSheet,
+        onBarcodeScanned = { barcode ->
+            viewModel.scanAndAddToCart(barcode)
+        }
+    ) {
+    // Display products based on filter: Favorites or category
+    val baseProducts = when {
+        uiState.selectedFilter.isFavorites -> uiState.favoriteProducts
+        else -> uiState.categoryProducts
+    }
+    val displayProducts = if (uiState.searchQuery.isBlank()) {
+        baseProducts
+    } else {
+        val q = uiState.searchQuery.lowercase()
+        baseProducts.filter {
+            it.name.lowercase().contains(q) || it.barcode?.lowercase()?.contains(q) == true
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         Column(
@@ -53,67 +74,181 @@ fun HomeScreen(
                 .fillMaxSize()
                 .padding(16.dp)
         ) {
-            // Header with Cart Button
+            // Header: Ticket with item count
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "Quick Checkout",
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                
-                // Cart Button
-                FloatingActionButton(
-                    onClick = { viewModel.toggleCart() },
-                    modifier = Modifier.size(56.dp),
-                    containerColor = MaterialTheme.colorScheme.primary
-                ) {
-                    Badge(
-                        modifier = Modifier.offset(x = 12.dp, y = (-12).dp),
-                        containerColor = MaterialTheme.colorScheme.error
-                    ) {
-                        Text(uiState.cartItems.size.toString())
-                    }
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        Icons.Default.ShoppingCart,
-                        contentDescription = "Cart",
+                        Icons.Default.Receipt,
+                        contentDescription = null,
                         modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Ticket",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    if (uiState.cartItems.isNotEmpty()) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Surface(
+                            shape = MaterialTheme.shapes.small,
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Text(
+                                text = "${uiState.cartItems.size}",
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                        }
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    IconButton(onClick = { showBarcodeScanner = true }) {
+                        Icon(Icons.Default.QrCodeScanner, contentDescription = "Scan Barcode")
+                    }
+                    IconButton(onClick = { viewModel.toggleFavoritesSheet() }) {
+                        Icon(
+                            Icons.Default.Star,
+                            contentDescription = "Manage favorites",
+                            tint = if (uiState.favoriteProducts.isNotEmpty()) Color(0xFFFFC107) else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // CHARGE button - prominent, always visible
+            val chargeTotal = maxOf(0.0, uiState.cartTotal - uiState.discount)
+            Button(
+                onClick = {
+                    if (uiState.cartItems.isNotEmpty()) {
+                        viewModel.toggleCart()
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(64.dp),
+                enabled = uiState.cartItems.isNotEmpty(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF4CAF50)
+                )
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "CHARGE",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = CurrencyUtils.formatCurrency(chargeTotal, uiState.currencyCode),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
                     )
                 }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Search Bar with Barcode Scanner
+            // Category filter + Search bar
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // Category dropdown
+                val filterLabel = when {
+                    uiState.selectedFilter.isFavorites -> "Favourite items"
+                    uiState.selectedFilter.categoryId != null -> {
+                        uiState.categories.find { it.id == uiState.selectedFilter.categoryId }?.name ?: "Favourite items"
+                    }
+                    else -> "Favourite items"
+                }
+                var filterExpanded by remember { mutableStateOf(false) }
+                Box(modifier = Modifier.weight(1f)) {
+                    ExposedDropdownMenuBox(
+                        expanded = filterExpanded,
+                        onExpandedChange = { filterExpanded = it }
+                    ) {
+                        OutlinedCard(
+                            onClick = { filterExpanded = true },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .menuAnchor()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = filterLabel,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Icon(
+                                    Icons.Default.KeyboardArrowDown,
+                                    contentDescription = "Select category",
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+                        }
+                        ExposedDropdownMenu(
+                            expanded = filterExpanded,
+                            onDismissRequest = { filterExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Favourite items") },
+                                onClick = {
+                                    viewModel.selectFilter(CategoryFilter(isFavorites = true))
+                                    filterExpanded = false
+                                }
+                            )
+                            uiState.categories.forEach { category ->
+                                DropdownMenuItem(
+                                    text = { Text(category.name) },
+                                    onClick = {
+                                        viewModel.selectFilter(CategoryFilter(isFavorites = false, categoryId = category.id))
+                                        filterExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                IconButton(onClick = { viewModel.toggleSearchBar() }) {
+                    Icon(
+                        Icons.Default.Search,
+                        contentDescription = "Search",
+                        tint = if (uiState.showSearchBar) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+            if (uiState.showSearchBar) {
+                Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(
                     value = uiState.searchQuery,
                     onValueChange = { viewModel.updateSearchQuery(it) },
-                    label = { Text("Search products...") },
-                    modifier = Modifier.weight(1f),
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
+                    placeholder = { Text("Search items...") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                    trailingIcon = {
+                        if (uiState.searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { viewModel.updateSearchQuery("") }) {
+                                Icon(Icons.Default.Clear, contentDescription = "Clear")
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
-                FloatingActionButton(
-                    onClick = { showBarcodeScanner = true },
-                    modifier = Modifier.size(56.dp),
-                    containerColor = MaterialTheme.colorScheme.secondary
-                ) {
-                    Icon(
-                        Icons.Default.QrCodeScanner,
-                        contentDescription = "Scan Barcode"
-                    )
-                }
+                Spacer(modifier = Modifier.height(8.dp))
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             // Error/Success Messages
             uiState.errorMessage?.let { error ->
@@ -190,177 +325,51 @@ fun HomeScreen(
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // Search Results
-                    if (uiState.searchQuery.isNotBlank()) {
+                    if (displayProducts.isEmpty()) {
                         item {
-                            Text(
-                                text = "Search Results",
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        
-                        if (uiState.searchResults.isEmpty()) {
-                            item {
-                                Card(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(32.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(32.dp),
-                                        horizontalAlignment = Alignment.CenterHorizontally
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Search,
-                                            contentDescription = "No Results",
-                                            modifier = Modifier.size(64.dp),
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                        Spacer(modifier = Modifier.height(16.dp))
-                                        Text(
-                                            text = "No products found",
-                                            style = MaterialTheme.typography.headlineSmall,
-                                            textAlign = TextAlign.Center
-                                        )
-                                        Text(
-                                            text = "Try a different search term",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            textAlign = TextAlign.Center,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
+                                    Icon(
+                                        Icons.Default.Star,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(64.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    Text(
+                                        text = "No items yet",
+                                        style = MaterialTheme.typography.headlineSmall,
+                                        textAlign = TextAlign.Center
+                                    )
+                                    Text(
+                                        text = "Tap the star icon above to add items",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        textAlign = TextAlign.Center,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
-                            }
-                        } else {
-                            items(uiState.searchResults) { product ->
-                                ProductCard(
-                                    product = product,
-                                    currencyCode = uiState.currencyCode,
-                                    onAddToCart = { quantity -> viewModel.addToCart(product, quantity) },
-                                    onToggleFavorite = { 
-                                        if (uiState.favoriteProducts.any { it.id == product.id }) {
-                                            viewModel.removeFromFavorites(product)
-                                        } else {
-                                            viewModel.addToFavorites(product)
-                                        }
-                                    },
-                                    isFavorite = uiState.favoriteProducts.any { it.id == product.id }
-                                )
                             }
                         }
                     } else {
-                        // Favorites Section
-                        item {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "Hot Selling Items",
-                                    style = MaterialTheme.typography.titleLarge,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = "Tap star to add/remove",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                        
-                        if (uiState.favoriteProducts.isEmpty()) {
-                            item {
-                                Card(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
-                                ) {
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(32.dp),
-                                        horizontalAlignment = Alignment.CenterHorizontally
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Star,
-                                            contentDescription = "No Favorites",
-                                            modifier = Modifier.size(64.dp),
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                        Spacer(modifier = Modifier.height(16.dp))
-                                        Text(
-                                            text = "No favorite items yet",
-                                            style = MaterialTheme.typography.headlineSmall,
-                                            textAlign = TextAlign.Center
-                                        )
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        Text(
-                                            text = "Search for products and tap the star to add them to favorites",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            textAlign = TextAlign.Center,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                            }
-                        } else {
-                                // Vertical scrollable list for hot selling items with drag-and-drop
-                            itemsIndexed(
-                                items = uiState.favoriteProducts,
-                                key = { _, product -> product.id }
-                            ) { index, product ->
-                                val isDragging = draggedItemIndex == index
-                                val elevation by animateDpAsState(
-                                    targetValue = if (isDragging) 8.dp else 4.dp,
-                                    label = "elevation"
-                                )
-                                
-                                VerticalFavoriteProductCard(
-                                    product = product,
-                                    currencyCode = uiState.currencyCode,
-                                    onAddToCart = { 
-                                        viewModel.addToCart(product, 1)
-                                        Toast.makeText(context, "${product.name} added to cart", Toast.LENGTH_SHORT).show()
-                                    },
-                                    onToggleFavorite = { viewModel.removeFromFavorites(product) },
-                                    isFavorite = true,
-                                    isDragging = isDragging,
-                                    elevation = elevation,
-                                    onDragStart = { draggedItemIndex = index },
-                                    onDrag = { delta ->
-                                        dragOffset += delta
-                                        val itemHeight = 100 // Approximate item height in dp
-                                        val targetIndex = (index + (dragOffset / itemHeight).toInt())
-                                            .coerceIn(0, uiState.favoriteProducts.size - 1)
-                                        if (targetIndex != index) {
-                                            viewModel.reorderFavorites(index, targetIndex)
-                                            draggedItemIndex = targetIndex
-                                            dragOffset = 0f
-                                        }
-                                    },
-                                    onDragEnd = {
-                                        draggedItemIndex = null
-                                        dragOffset = 0f
-                                    }
-                                )
-                            }
-                            
-                            // Hint for reordering
-                            item {
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    text = "Hold and drag items to reorder",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.fillMaxWidth(),
-                                    textAlign = TextAlign.Center
-                                )
-                                Spacer(modifier = Modifier.height(16.dp))
-                            }
+                        items(
+                            items = displayProducts,
+                            key = { product -> product.id }
+                        ) { product ->
+                            ProductCard(
+                                product = product,
+                                currencyCode = uiState.currencyCode,
+                                onAddToCart = { quantity -> viewModel.addToCart(product, quantity) }
+                            )
                         }
                     }
                 }
@@ -375,6 +384,7 @@ fun HomeScreen(
                 cartWholesaleTotal = uiState.cartWholesaleTotal,
                 discount = uiState.discount,
                 paymentMethod = uiState.paymentMethod,
+                amountPaid = uiState.amountPaid,
                 wholesaleModeEnabled = uiState.wholesaleModeEnabled,
                 customerName = uiState.customerName,
                 currencyCode = uiState.currencyCode,
@@ -393,8 +403,23 @@ fun HomeScreen(
                 onUpdateDiscount = { discount ->
                     viewModel.updateDiscount(discount)
                 },
+                onUpdateAmountPaid = { viewModel.updateAmountPaid(it) },
                 onCheckout = { isWholesale -> viewModel.checkout(isWholesale) },
                 onDismiss = { viewModel.toggleCart() }
+            )
+        }
+        
+        // Favorites Management Bottom Sheet
+        if (uiState.showFavoritesSheet) {
+            FavoritesBottomSheet(
+                favoriteProducts = uiState.favoriteProducts,
+                allProducts = uiState.allProducts,
+                categories = uiState.categories,
+                currencyCode = uiState.currencyCode,
+                onAddToFavorites = { viewModel.addToFavorites(it) },
+                onRemoveFromFavorites = { viewModel.removeFromFavorites(it) },
+                onReorderFavorites = { from, to -> viewModel.reorderFavorites(from, to) },
+                onDismiss = { viewModel.toggleFavoritesSheet() }
             )
         }
         
@@ -419,22 +444,31 @@ fun HomeScreen(
             )
         }
     }
+    } // End BluetoothBarcodeDetector
 }
 
 @Composable
 fun ProductCard(
     product: Product,
     currencyCode: String,
-    onAddToCart: (Int) -> Unit,
-    onToggleFavorite: () -> Unit,
-    isFavorite: Boolean
+    onAddToCart: (Int) -> Unit
 ) {
-    var quantityText by remember { mutableStateOf(TextFieldValue("1", TextRange(0, 1))) }
-    val focusRequester = remember { FocusRequester() }
+    var showQuantityDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val canAddToCart = !product.trackInventory || product.quantityInStock > 0
     
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = {
+                    if (canAddToCart) {
+                        onAddToCart(1)
+                        Toast.makeText(context, "${product.name} added to cart", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                onLongClick = { if (canAddToCart) showQuantityDialog = true }
+            ),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Row(
@@ -443,91 +477,281 @@ fun ProductCard(
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(modifier = Modifier.weight(1f)) {
+            ProductImageOrColorBox(
+                imagePath = product.imagePath,
+                colorHex = product.colorHex,
+                context = context,
+                size = 44.dp
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                text = product.name,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f)
+            )
+            Text(
+                text = CurrencyUtils.formatCurrency(product.sellingPrice, currencyCode),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+    }
+    
+    if (showQuantityDialog) {
+        QuantityDialog(
+            productName = product.name,
+            onConfirm = { qty ->
+                onAddToCart(qty)
+                Toast.makeText(context, "${product.name} (x$qty) added to cart", Toast.LENGTH_SHORT).show()
+                showQuantityDialog = false
+            },
+            onDismiss = { showQuantityDialog = false }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun FavoritesBottomSheet(
+    favoriteProducts: List<Product>,
+    allProducts: List<Product>,
+    categories: List<com.example.shoptracklite.data.Category> = emptyList(),
+    currencyCode: String,
+    onAddToFavorites: (Product) -> Unit,
+    onRemoveFromFavorites: (Product) -> Unit,
+    onReorderFavorites: (Int, Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var draggedIndex by remember { mutableStateOf<Int?>(null) }
+    var accumulatedDrag by remember { mutableStateOf(0f) }
+    var selectedCategoryId by remember { mutableStateOf<Long?>(null) }
+    val context = LocalContext.current
+    val favoriteIds = favoriteProducts.map { it.id }.toSet()
+    val availableProducts = allProducts.filter { it.id !in favoriteIds }
+    val productsToAdd = if (selectedCategoryId == null) {
+        availableProducts
+    } else {
+        availableProducts.filter { it.categoryId == selectedCategoryId }
+    }
+    
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Text(
-                    text = product.name,
-                    style = MaterialTheme.typography.titleMedium,
+                    text = "Manage Favorites",
+                    style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold
                 )
-                Text(
-                    text = "Stock: ${product.quantityInStock}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (product.quantityInStock > 0) 
-                        MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-                )
-                Text(
-                    text = CurrencyUtils.formatCurrency(product.sellingPrice, currencyCode),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-            
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                IconButton(onClick = onToggleFavorite) {
-                    Icon(
-                        Icons.Default.Star,
-                        contentDescription = if (isFavorite) "Remove from favorites" else "Add to favorites",
-                        tint = if (isFavorite) Color(0xFFFFC107) else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Default.Close, contentDescription = "Close")
                 }
-                
-                // Quantity input field - always visible
-                OutlinedTextField(
-                    value = quantityText,
-                    onValueChange = { newValue ->
-                        // Only allow positive integers
-                        if (newValue.text.isEmpty()) {
-                            // Allow empty text temporarily while user is typing
-                            quantityText = newValue
-                        } else if (newValue.text.all { it.isDigit() } && newValue.text.toIntOrNull() != null && newValue.text.toInt() > 0) {
-                            quantityText = newValue
-                        }
-                    },
-                    modifier = Modifier
-                        .width(60.dp)
-                        .focusRequester(focusRequester)
-                        .onFocusChanged { focusState ->
-                            if (focusState.isFocused) {
-                                // Select all text when focused
-                                quantityText = quantityText.copy(
-                                    selection = TextRange(0, quantityText.text.length)
-                                )
-                            } else if (focusState.hasFocus.not()) {
-                                // If user leaves field empty, set to default value
-                                if (quantityText.text.isEmpty()) {
-                                    quantityText = TextFieldValue("1", TextRange(0, 1))
+            }
+            Text(
+                text = "Long-press the handle (≡) and drag to reorder. Tap items below to add.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+            
+            // Favorites list (reorderable)
+            if (favoriteProducts.isNotEmpty()) {
+                Text(
+                    text = "Your favorites",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                LazyColumn(
+                    modifier = Modifier.heightIn(max = 200.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    itemsIndexed(
+                        items = favoriteProducts,
+                        key = { _, p -> p.id }
+                    ) { index, product ->
+                        val isDragging = draggedIndex == index
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .pointerInput(favoriteProducts.size) {
+                                        detectDragGesturesAfterLongPress(
+                                            onDragStart = {
+                                                draggedIndex = index
+                                                accumulatedDrag = 0f
+                                            },
+                                            onDrag = { change, dragAmount ->
+                                                change.consume()
+                                                val idx = draggedIndex ?: index
+                                                accumulatedDrag = accumulatedDrag + dragAmount.y
+                                                val targetIndex = (idx + (accumulatedDrag / 40f).toInt())
+                                                    .coerceIn(0, favoriteProducts.size - 1)
+                                                if (targetIndex != idx) {
+                                                    onReorderFavorites(idx, targetIndex)
+                                                    draggedIndex = targetIndex
+                                                    accumulatedDrag = 0f
+                                                }
+                                            },
+                                            onDragEnd = {
+                                                draggedIndex = null
+                                                accumulatedDrag = 0f
+                                            },
+                                            onDragCancel = {
+                                                draggedIndex = null
+                                                accumulatedDrag = 0f
+                                            }
+                                        )
+                                    }
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Default.Menu,
+                                        contentDescription = "Drag to reorder",
+                                        modifier = Modifier
+                                            .size(28.dp)
+                                            .padding(end = 8.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    ProductImageOrColorBox(
+                                        imagePath = product.imagePath,
+                                        colorHex = product.colorHex,
+                                        context = context,
+                                        size = 36.dp
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Text(
+                                        text = product.name,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Text(
+                                        text = CurrencyUtils.formatCurrency(product.sellingPrice, currencyCode),
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
                                 }
                             }
-                        },
-                    textStyle = MaterialTheme.typography.bodySmall.copy(
-                        textAlign = TextAlign.Center
-                    ),
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Number
-                    ),
-                    label = { Text("Qty") }
-                )
-                
-                // Cart icon for quick add (uses quantity from text field)
-                IconButton(
-                    onClick = {
-                        val quantity = quantityText.text.toIntOrNull() ?: 1
-                        onAddToCart(quantity)
-                        Toast.makeText(context, "${product.name} (x$quantity) added to cart", Toast.LENGTH_SHORT).show()
-                    },
-                    enabled = product.quantityInStock > 0
+                            IconButton(
+                                onClick = { onRemoveFromFavorites(product) },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.RemoveCircle,
+                                    contentDescription = "Remove from favorites",
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+            
+            // Add items section with category filter
+            if (categories.isNotEmpty()) {
+                var catExpanded by remember { mutableStateOf(false) }
+                ExposedDropdownMenuBox(
+                    expanded = catExpanded,
+                    onExpandedChange = { catExpanded = it }
                 ) {
-                    Icon(
-                        Icons.Default.ShoppingCart,
-                        contentDescription = "Add to cart",
-                        tint = if (product.quantityInStock > 0) 
-                            MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    OutlinedTextField(
+                        value = selectedCategoryId?.let { id ->
+                            categories.find { it.id == id }?.name ?: "All categories"
+                        } ?: "All categories",
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Filter by category") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = catExpanded) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor()
                     )
+                    ExposedDropdownMenu(
+                        expanded = catExpanded,
+                        onDismissRequest = { catExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("All categories") },
+                            onClick = {
+                                selectedCategoryId = null
+                                catExpanded = false
+                            }
+                        )
+                        categories.forEach { cat ->
+                            DropdownMenuItem(
+                                text = { Text(cat.name) },
+                                onClick = {
+                                    selectedCategoryId = cat.id
+                                    catExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+            Text(
+                text = if (productsToAdd.isEmpty()) "No items to add" else "Tap to add to favorites",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+            LazyColumn(
+                modifier = Modifier.heightIn(max = 300.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                items(productsToAdd, key = { it.id }) { product ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onAddToFavorites(product) }
+                            .padding(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        ProductImageOrColorBox(
+                            imagePath = product.imagePath,
+                            colorHex = product.colorHex,
+                            context = context,
+                            size = 36.dp
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(
+                            text = product.name,
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            text = CurrencyUtils.formatCurrency(product.sellingPrice, currencyCode),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Icon(
+                            Icons.Default.Add,
+                            contentDescription = "Add to favorites",
+                            modifier = Modifier.size(24.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
                 }
             }
         }
@@ -535,127 +759,53 @@ fun ProductCard(
 }
 
 @Composable
-fun VerticalFavoriteProductCard(
-    product: Product,
-    currencyCode: String,
-    onAddToCart: () -> Unit,
-    onToggleFavorite: () -> Unit,
-    isFavorite: Boolean,
-    isDragging: Boolean = false,
-    elevation: androidx.compose.ui.unit.Dp = 4.dp,
-    onDragStart: () -> Unit = {},
-    onDrag: (Float) -> Unit = {},
-    onDragEnd: () -> Unit = {}
+fun QuantityDialog(
+    productName: String,
+    onConfirm: (Int) -> Unit,
+    onDismiss: () -> Unit
 ) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .shadow(elevation)
-            .zIndex(if (isDragging) 1f else 0f)
-            .pointerInput(Unit) {
-                detectDragGesturesAfterLongPress(
-                    onDragStart = { onDragStart() },
-                    onDrag = { change, dragAmount ->
-                        change.consume()
-                        onDrag(dragAmount.y)
-                    },
-                    onDragEnd = { onDragEnd() },
-                    onDragCancel = { onDragEnd() }
-                )
-            },
-        elevation = CardDefaults.cardElevation(defaultElevation = elevation),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isDragging) 
-                MaterialTheme.colorScheme.surfaceVariant 
-            else MaterialTheme.colorScheme.surface
-        )
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Drag handle indicator
-            Icon(
-                Icons.Default.Menu,
-                contentDescription = "Drag to reorder",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                modifier = Modifier
-                    .size(20.dp)
-                    .padding(end = 8.dp)
-            )
-            
-            // Product info
-            Column(modifier = Modifier.weight(1f)) {
+    var quantityText by remember { mutableStateOf("1") }
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add to cart") },
+        text = {
+            Column {
                 Text(
-                    text = product.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
+                    text = "Quantity for $productName",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(bottom = 8.dp)
                 )
-                
-                Spacer(modifier = Modifier.height(4.dp))
-                
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Stock: ${product.quantityInStock}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (product.quantityInStock > 0) 
-                            MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-                    )
-                    Text(
-                        text = CurrencyUtils.formatCurrency(product.sellingPrice, currencyCode),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
+                OutlinedTextField(
+                    value = quantityText,
+                    onValueChange = { newValue ->
+                        if (newValue.isEmpty() || newValue.all { it.isDigit() }) {
+                            quantityText = newValue
+                        }
+                    },
+                    label = { Text("Quantity") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                )
             }
-            
-            // Action buttons - Favourite toggle and Cart
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val qty = quantityText.toIntOrNull()?.coerceAtLeast(1) ?: 1
+                    onConfirm(qty)
+                }
             ) {
-                // Favourite toggle button
-                IconButton(
-                    onClick = onToggleFavorite,
-                    modifier = Modifier.size(40.dp)
-                ) {
-                    Icon(
-                        Icons.Default.Star,
-                        contentDescription = if (isFavorite) "Remove from favorites" else "Add to favorites",
-                        tint = if (isFavorite) Color(0xFFFFC107) else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-                
-                // Large Cart button - one click adds 1 item
-                FilledIconButton(
-                    onClick = onAddToCart,
-                    enabled = product.quantityInStock > 0,
-                    modifier = Modifier.size(56.dp),
-                    colors = IconButtonDefaults.filledIconButtonColors(
-                        containerColor = if (product.quantityInStock > 0) 
-                            MaterialTheme.colorScheme.primary 
-                        else MaterialTheme.colorScheme.surfaceVariant
-                    )
-                ) {
-                    Icon(
-                        Icons.Default.AddShoppingCart,
-                        contentDescription = "Add to cart",
-                        tint = if (product.quantityInStock > 0) 
-                            MaterialTheme.colorScheme.onPrimary 
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(28.dp)
-                    )
-                }
+                Text("Add")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
             }
         }
-    }
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -666,6 +816,7 @@ fun CartBottomSheet(
     cartWholesaleTotal: Double,
     discount: Double,
     paymentMethod: PaymentMethod,
+    amountPaid: Double = 0.0,
     wholesaleModeEnabled: Boolean,
     customerName: String,
     currencyCode: String,
@@ -674,6 +825,7 @@ fun CartBottomSheet(
     onUpdatePaymentMethod: (PaymentMethod) -> Unit,
     onUpdateCustomerName: (String) -> Unit,
     onUpdateDiscount: (Double) -> Unit,
+    onUpdateAmountPaid: (Double) -> Unit = {},
     onCheckout: (Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -797,7 +949,62 @@ fun CartBottomSheet(
                         )
                     }
                     
-                    Spacer(modifier = Modifier.height(12.dp))
+                    // Amount paid and change (Cash only)
+                    if (paymentMethod == PaymentMethod.CASH) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        val finalTotal = maxOf(0.0, cartTotal - discount)
+                        val change = maxOf(0.0, amountPaid - finalTotal)
+                        Text(
+                            text = "Amount Paid",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                        OutlinedTextField(
+                            value = if (amountPaid > 0) amountPaid.toString() else "",
+                            onValueChange = { value ->
+                                if (value.isEmpty() || value.matches(Regex("^\\d*\\.?\\d*$"))) {
+                                    val v = value.toDoubleOrNull() ?: 0.0
+                                    onUpdateAmountPaid(v)
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            placeholder = { Text("Enter amount received") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            prefix = { Text(CurrencyUtils.getCurrencySymbol(currencyCode)) }
+                        )
+                        if (amountPaid > 0) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                                )
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Change to give:",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = CurrencyUtils.formatCurrency(change, currencyCode),
+                                        style = MaterialTheme.typography.titleLarge,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                    }
                     
                     // Discount Input
                     Row(
@@ -1069,6 +1276,7 @@ fun CartItemRow(
     var isEditing by remember { mutableStateOf(false) }
     var textFieldValue by remember { mutableStateOf(item.quantity.toString()) }
     val focusRequester = remember { FocusRequester() }
+    val context = LocalContext.current
     
     // Update text field when quantity changes externally (e.g., via +/- buttons)
     LaunchedEffect(item.quantity) {
@@ -1087,6 +1295,13 @@ fun CartItemRow(
                 .padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            ProductImageOrColorBox(
+                imagePath = item.imagePath,
+                colorHex = item.colorHex,
+                context = context,
+                size = 36.dp
+            )
+            Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = item.productName,

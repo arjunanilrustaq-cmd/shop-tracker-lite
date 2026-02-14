@@ -5,11 +5,16 @@ import java.util.Date
 
 class ShopTrackRepository(
     private val productDao: ProductDao,
+    private val categoryDao: CategoryDao,
     private val saleDao: SaleDao,
     private val favoriteDao: FavoriteDao,
     private val priceRangeDao: PriceRangeDao,
     private val settingsDao: SettingsDao,
-    private val expenseDao: ExpenseDao
+    private val expenseDao: ExpenseDao,
+    private val cashReconciliationDao: CashReconciliationDao,
+    private val supplyDao: SupplyDao? = null,
+    private val productSupplyLinkDao: ProductSupplyLinkDao? = null,
+    private val purchaseBillDao: PurchaseBillDao? = null
 ) {
     // Product operations
     fun getAllProducts(): Flow<List<Product>> = productDao.getAllProducts()
@@ -26,6 +31,20 @@ class ShopTrackRepository(
     
     suspend fun updateProductQuantity(productId: Long, newQuantity: Int) = 
         productDao.updateProductQuantity(productId, newQuantity)
+
+    // Category operations
+    fun getAllCategories(): Flow<List<Category>> = categoryDao.getAllCategories()
+    
+    suspend fun getAllCategoriesSync(): List<Category> = categoryDao.getAllCategoriesSync()
+    
+    suspend fun insertCategory(category: Category): Long = categoryDao.insertCategory(category)
+    
+    suspend fun updateCategory(category: Category) = categoryDao.updateCategory(category)
+    
+    suspend fun deleteCategory(category: Category) = categoryDao.deleteCategory(category)
+    
+    fun getProductsByCategory(categoryId: Long?): Flow<List<Product>> = 
+        productDao.getProductsByCategory(categoryId)
 
     // Sale operations
     fun getAllSales(): Flow<List<Sale>> = saleDao.getAllSales()
@@ -60,6 +79,12 @@ class ShopTrackRepository(
     fun getMonthlySalesByDate(): Flow<List<MonthlySalesSummary>> = saleDao.getMonthlySalesByDate()
     
     fun getSalesByDateString(date: String): Flow<List<Sale>> = saleDao.getSalesByDateString(date)
+    
+    // Sales for a specific year-month (format: "YYYY-MM")
+    fun getSalesByYearMonth(yearMonth: String): Flow<List<Sale>> = saleDao.getSalesByYearMonth(yearMonth)
+    
+    fun getMonthlySalesByDateForMonth(yearMonth: String): Flow<List<MonthlySalesSummary>> = 
+        saleDao.getMonthlySalesByDateForMonth(yearMonth)
     
     suspend fun getRevenueByDate(date: String): Double = saleDao.getRevenueByDate(date) ?: 0.0
     
@@ -144,6 +169,9 @@ class ShopTrackRepository(
     
     fun getExpensesByDateString(date: String): Flow<List<Expense>> = expenseDao.getExpensesByDateString(date)
     
+    // Expenses for a specific year-month (format: "YYYY-MM")
+    fun getExpensesByYearMonth(yearMonth: String): Flow<List<Expense>> = expenseDao.getExpensesByYearMonth(yearMonth)
+    
     suspend fun getTodaysExpenseTotal(): Double = expenseDao.getTodaysExpenseTotal() ?: 0.0
     
     suspend fun getExpenseTotalByDate(date: String): Double = expenseDao.getExpenseTotalByDate(date) ?: 0.0
@@ -155,10 +183,10 @@ class ShopTrackRepository(
     suspend fun deleteExpense(expense: Expense) = expenseDao.deleteExpense(expense)
 
     // Business logic operations
-    suspend fun recordSale(productId: Long, quantitySold: Int, paymentMethod: PaymentMethod, isWholesale: Boolean = false, discountAmount: Double = 0.0): Boolean {
+    suspend fun recordSale(productId: Long, quantitySold: Int, paymentMethod: PaymentMethod, isWholesale: Boolean = false, discountAmount: Double = 0.0, transactionId: Long? = null): Boolean {
         val product = getProductById(productId) ?: return false
         
-        if (product.quantityInStock < quantitySold) return false
+        if (product.trackInventory && product.quantityInStock < quantitySold) return false
         
         // Calculate total amount based on sale type (before discount)
         val totalAmountBeforeDiscount = if (isWholesale && product.wholesalePrice != null) {
@@ -193,11 +221,15 @@ class ShopTrackRepository(
             costPrice = product.costPrice,
             profit = profit,
             paymentMethod = paymentMethod,
-            isWholesale = isWholesale
+            isWholesale = isWholesale,
+            transactionId = transactionId
         )
         
         insertSale(sale)
-        updateProductQuantity(productId, product.quantityInStock - quantitySold)
+        if (product.trackInventory) {
+            updateProductQuantity(productId, product.quantityInStock - quantitySold)
+            deductSuppliesForSale(productId, quantitySold)
+        }
         
         return true
     }
@@ -220,6 +252,15 @@ class ShopTrackRepository(
             cogs = salesList.sumOf { it.costPrice * it.quantitySold }
         }
         return cogs
+    }
+    
+    // Cancel all sales in a transaction (bill)
+    suspend fun cancelSalesByTransaction(sales: List<Sale>): Boolean {
+        var allSuccess = true
+        for (sale in sales) {
+            if (!cancelSale(sale.id)) allSuccess = false
+        }
+        return allSuccess
     }
     
     // Cancel a sale - restores inventory and marks sale as cancelled
@@ -246,5 +287,142 @@ class ShopTrackRepository(
             android.util.Log.e("ShopTrackRepository", "Error cancelling sale", e)
             return false
         }
+    }
+    
+    // Cash Reconciliation operations
+    fun getCashReconciliationByDate(date: String): Flow<CashReconciliation?> = 
+        cashReconciliationDao.getByDate(date)
+    
+    suspend fun getCashReconciliationByDateSync(date: String): CashReconciliation? = 
+        cashReconciliationDao.getByDateSync(date)
+    
+    suspend fun getPreviousDayReconciliation(date: String): CashReconciliation? = 
+        cashReconciliationDao.getPreviousDay(date)
+    
+    suspend fun saveCashReconciliation(reconciliation: CashReconciliation) = 
+        cashReconciliationDao.insertOrUpdate(reconciliation)
+    
+    fun getAllCashReconciliations(): Flow<List<CashReconciliation>> = 
+        cashReconciliationDao.getAll()
+    
+    // Supply operations
+    fun getAllSupplies(): Flow<List<Supply>> = supplyDao?.getAllSupplies() ?: kotlinx.coroutines.flow.flowOf(emptyList())
+    
+    suspend fun getAllSuppliesList(): List<Supply> = supplyDao?.getAllSuppliesList() ?: emptyList()
+    
+    suspend fun getSupplyById(id: Long): Supply? = supplyDao?.getSupplyById(id)
+    
+    fun getLowStockSupplies(): Flow<List<Supply>> = supplyDao?.getLowStockSupplies() ?: kotlinx.coroutines.flow.flowOf(emptyList())
+    
+    suspend fun insertSupply(supply: Supply): Long = supplyDao?.insertSupply(supply) ?: 0L
+    
+    suspend fun updateSupply(supply: Supply) = supplyDao?.updateSupply(supply)
+    
+    suspend fun deleteSupply(supply: Supply) {
+        // Delete all links to this supply first
+        productSupplyLinkDao?.deleteLinksForSupply(supply.id)
+        supplyDao?.deleteSupply(supply)
+    }
+    
+    suspend fun incrementSupplyQuantity(supplyId: Long, amount: Double) = supplyDao?.incrementQuantity(supplyId, amount)
+    
+    suspend fun decrementSupplyQuantity(supplyId: Long, amount: Double) = supplyDao?.decrementQuantity(supplyId, amount)
+    
+    suspend fun setSupplyQuantity(supplyId: Long, newQuantity: Double) = supplyDao?.setQuantity(supplyId, newQuantity)
+    
+    // Product-Supply Link operations
+    suspend fun getSupplyLinksForProduct(productId: Long): List<ProductSupplyLink> = 
+        productSupplyLinkDao?.getLinksForProduct(productId) ?: emptyList()
+    
+    fun getSuppliesForProduct(productId: Long): Flow<List<Supply>> = 
+        productSupplyLinkDao?.getSuppliesForProduct(productId) ?: kotlinx.coroutines.flow.flowOf(emptyList())
+    
+    fun getProductsForSupply(supplyId: Long): Flow<List<Product>> = 
+        productSupplyLinkDao?.getProductsForSupply(supplyId) ?: kotlinx.coroutines.flow.flowOf(emptyList())
+    
+    suspend fun addSupplyLink(link: ProductSupplyLink) = productSupplyLinkDao?.insertLink(link)
+    
+    suspend fun removeSupplyLink(link: ProductSupplyLink) = productSupplyLinkDao?.deleteLink(link)
+    
+    suspend fun updateSupplyLinksForProduct(productId: Long, links: List<ProductSupplyLink>) = 
+        productSupplyLinkDao?.updateLinksForProduct(productId, links)
+    
+    // Deduct supplies when a product is sold
+    suspend fun deductSuppliesForSale(productId: Long, quantitySold: Int) {
+        val links = productSupplyLinkDao?.getLinksForProduct(productId) ?: return
+        for (link in links) {
+            val consumedAmount = link.quantityConsumed * quantitySold
+            supplyDao?.decrementQuantity(link.supplyId, consumedAmount)
+        }
+    }
+    
+    // Purchase Bill operations
+    fun getAllPurchaseBills(): Flow<List<PurchaseBill>> = 
+        purchaseBillDao?.getAllBills() ?: kotlinx.coroutines.flow.flowOf(emptyList())
+    
+    fun getAllPurchaseBillsWithItems(): Flow<List<PurchaseBillWithItems>> = 
+        purchaseBillDao?.getAllBillsWithItems() ?: kotlinx.coroutines.flow.flowOf(emptyList())
+    
+    suspend fun getPurchaseBillWithItems(billId: Long): PurchaseBillWithItems? = 
+        purchaseBillDao?.getBillWithItems(billId)
+    
+    fun getPurchaseBillsForDateRange(startDate: Date, endDate: Date): Flow<List<PurchaseBill>> = 
+        purchaseBillDao?.getBillsForDateRange(startDate, endDate) ?: kotlinx.coroutines.flow.flowOf(emptyList())
+    
+    suspend fun getTotalPurchasesForDateRange(startDate: Date, endDate: Date): Double = 
+        purchaseBillDao?.getTotalPurchasesForDateRange(startDate, endDate) ?: 0.0
+    
+    suspend fun insertPurchaseBill(bill: PurchaseBill): Long = purchaseBillDao?.insertBill(bill) ?: 0L
+    
+    suspend fun deletePurchaseBill(bill: PurchaseBill) = purchaseBillDao?.deleteBillWithItems(bill)
+    
+    suspend fun insertPurchaseBillWithItems(bill: PurchaseBill, items: List<PurchaseItem>): Long = 
+        purchaseBillDao?.insertBillWithItems(bill, items) ?: 0L
+    
+    // Complete purchase flow: create bill, update inventory/supplies, optionally record expense
+    suspend fun recordPurchase(
+        bill: PurchaseBill,
+        items: List<PurchaseItem>,
+        recordAsExpense: Boolean = true
+    ): Long {
+        // Insert the bill and items
+        val billId = insertPurchaseBillWithItems(bill, items)
+        
+        // Update inventory/supplies based on item types
+        for (item in items) {
+            when (item.itemType) {
+                PurchaseItemType.PRODUCT -> {
+                    item.itemId?.let { productId ->
+                        val product = getProductById(productId)
+                        product?.let {
+                            updateProductQuantity(productId, it.quantityInStock + item.quantity.toInt())
+                        }
+                    }
+                }
+                PurchaseItemType.SUPPLY -> {
+                    item.itemId?.let { supplyId ->
+                        incrementSupplyQuantity(supplyId, item.quantity)
+                    }
+                }
+            }
+        }
+        
+        // Optionally record as expense
+        if (recordAsExpense && bill.totalAmount > 0) {
+            val expenseCategory = if (items.any { it.itemType == PurchaseItemType.SUPPLY }) {
+                "Supplies"
+            } else {
+                "Inventory Purchase"
+            }
+            val expense = Expense(
+                description = bill.supplierName?.let { "Purchase from $it" } ?: "Inventory Purchase",
+                amount = bill.totalAmount,
+                category = expenseCategory,
+                date = bill.date
+            )
+            insertExpense(expense)
+        }
+        
+        return billId
     }
 }

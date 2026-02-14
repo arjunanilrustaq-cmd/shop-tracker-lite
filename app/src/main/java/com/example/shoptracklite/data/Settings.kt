@@ -8,6 +8,8 @@ data class Settings(
     @PrimaryKey
     val id: Int = 1,
     val wholesaleModeEnabled: Boolean = false,
-    val currencyCode: String = "USD" // Default to USD
+    val currencyCode: String = "USD", // Default to USD
+    val shopName: String = "", // Shop name for reports/bills
+    val crNumber: String = "" // CR number for bills
 )
 

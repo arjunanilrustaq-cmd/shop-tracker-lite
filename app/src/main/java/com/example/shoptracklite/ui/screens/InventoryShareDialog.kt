@@ -146,12 +146,13 @@ fun InventoryReportContent(products: List<Product>, currencyCode: String) {
     val dateFormat = SimpleDateFormat("MMM dd, yyyy 'at' hh:mm a", Locale.getDefault())
     val currentDate = dateFormat.format(Date())
     
-    // Calculate totals
+    // Calculate totals (only for products that track inventory)
     val totalItems = products.size
-    val totalStock = products.sumOf { it.quantityInStock }
-    val totalValue = products.sumOf { it.quantityInStock * it.sellingPrice }
-    val lowStockCount = products.count { it.quantityInStock < 10 }
-    val outOfStockCount = products.count { it.quantityInStock == 0 }
+    val trackedProducts = products.filter { it.trackInventory }
+    val totalStock = trackedProducts.sumOf { it.quantityInStock }
+    val totalValue = trackedProducts.sumOf { it.quantityInStock * it.sellingPrice }
+    val lowStockCount = trackedProducts.count { it.quantityInStock < 10 }
+    val outOfStockCount = trackedProducts.count { it.quantityInStock == 0 }
 
     // Use LazyColumn instead of Column to allow scrolling but in capture mode, all items will be visible
     Column(
@@ -287,16 +288,17 @@ fun InventoryReportContent(products: List<Product>, currencyCode: String) {
                         }
                     }
                     Text(
-                        text = "${product.quantityInStock}",
+                        text = if (product.trackInventory) "${product.quantityInStock}" else "N/A",
                         textAlign = TextAlign.Center,
                         modifier = Modifier.weight(1f),
                         fontSize = MaterialTheme.typography.bodySmall.fontSize,
-                        color = if (product.quantityInStock == 0) Color.Red 
+                        color = if (!product.trackInventory) Color.DarkGray
+                               else if (product.quantityInStock == 0) Color.Red 
                                else if (product.quantityInStock < 10) Color(0xFFFF6F00)
                                else Color.Black
                     )
                     Text(
-                        text = CurrencyUtils.formatCurrency(product.quantityInStock * product.sellingPrice, currencyCode),
+                        text = if (product.trackInventory) CurrencyUtils.formatCurrency(product.quantityInStock * product.sellingPrice, currencyCode) else "N/A",
                         textAlign = TextAlign.End,
                         modifier = Modifier.weight(1.5f),
                         fontSize = MaterialTheme.typography.bodySmall.fontSize,

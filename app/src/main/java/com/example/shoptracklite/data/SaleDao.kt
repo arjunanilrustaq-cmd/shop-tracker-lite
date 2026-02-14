@@ -52,6 +52,13 @@ interface SaleDao {
     @Query("SELECT DATE(saleDate/1000, 'unixepoch', 'localtime') as date, COUNT(*) as salesCount, SUM(totalAmount) as totalRevenue, SUM(profit) as totalProfit FROM sales WHERE isCancelled = 0 AND strftime('%Y-%m', saleDate/1000, 'unixepoch', 'localtime') = strftime('%Y-%m', 'now', 'localtime') GROUP BY DATE(saleDate/1000, 'unixepoch', 'localtime') ORDER BY date DESC")
     fun getMonthlySalesByDate(): Flow<List<MonthlySalesSummary>>
 
+    // Sales for a specific year-month (format: "YYYY-MM")
+    @Query("SELECT * FROM sales WHERE isCancelled = 0 AND strftime('%Y-%m', saleDate/1000, 'unixepoch', 'localtime') = :yearMonth ORDER BY saleDate DESC")
+    fun getSalesByYearMonth(yearMonth: String): Flow<List<Sale>>
+
+    @Query("SELECT DATE(saleDate/1000, 'unixepoch', 'localtime') as date, COUNT(*) as salesCount, SUM(totalAmount) as totalRevenue, SUM(profit) as totalProfit FROM sales WHERE isCancelled = 0 AND strftime('%Y-%m', saleDate/1000, 'unixepoch', 'localtime') = :yearMonth GROUP BY DATE(saleDate/1000, 'unixepoch', 'localtime') ORDER BY date DESC")
+    fun getMonthlySalesByDateForMonth(yearMonth: String): Flow<List<MonthlySalesSummary>>
+
     @Query("SELECT * FROM sales WHERE isCancelled = 0 AND DATE(saleDate/1000, 'unixepoch', 'localtime') = :date ORDER BY saleDate DESC")
     fun getSalesByDateString(date: String): Flow<List<Sale>>
 
